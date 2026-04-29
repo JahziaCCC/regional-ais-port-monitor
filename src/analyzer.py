@@ -1,6 +1,6 @@
 from math import radians, sin, cos, sqrt, atan2
 from collections import Counter, defaultdict
-from ports import PORTS
+from ports import ZONES
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
@@ -18,31 +18,52 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return radius * c
 
 
-def find_nearest_port(lat, lon):
-    nearest = None
-    nearest_distance = None
-
-    for port in PORTS:
-        distance = haversine_km(lat, lon, port["lat"], port["lon"])
-
-        if nearest_distance is None or distance < nearest_distance:
-            nearest = port
-            nearest_distance = distance
-
-    if nearest and nearest_distance <= nearest["radius_km"]:
-        return nearest["name"], nearest["sea"], round(nearest_distance, 1)
-
-    return "خارج نطاق الموانئ المحددة", detect_sea(lat, lon), None
-
-
 def detect_sea(lat, lon):
     if 34 <= lon <= 43 and 12 <= lat <= 31:
         return "البحر الأحمر"
 
-    if 47 <= lon <= 57 and 23 <= lat <= 30:
+    if 47 <= lon <= 59 and 19 <= lat <= 30:
         return "الخليج العربي"
 
     return "غير محدد"
+
+
+def find_zone(lat, lon):
+    matches = []
+
+    for zone in ZONES:
+        distance = haversine_km(lat, lon, zone["lat"], zone["lon"])
+
+        if distance <= zone["radius_km"]:
+            matches.append({
+                "name": zone["name"],
+                "sea": zone["sea"],
+                "type": zone["type"],
+                "distance": round(distance, 1),
+                "radius": zone["radius_km"],
+            })
+
+    if not matches:
+        return {
+            "name": "خارج نطاق الموانئ المحددة",
+            "sea": detect_sea(lat, lon),
+            "type": "Offshore / Transit",
+            "distance": None,
+        }
+
+    # الأولوية للموانئ الصغيرة إذا كانت قريبة جدًا
+    port_matches = [m for m in matches if m["type"] == "Port"]
+    if port_matches:
+        nearest_port = min(port_matches, key=lambda x: x["distance"])
+        if nearest_port["distance"] <= 12:
+            return nearest_port
+
+    # بعد ذلك نعطي الأولوية لمناطق الانتظار لأنها أدق للحركة البحرية خارج الأرصفة
+    anchorage_matches = [m for m in matches if m["type"] == "Anchorage"]
+    if anchorage_matches:
+        return min(anchorage_matches, key=lambda x: x["distance"])
+
+    return min(matches, key=lambda x: x["distance"])
 
 
 def classify_speed(sog):
@@ -93,7 +114,7 @@ def analyze_vessels(vessels):
             abnormal_count += 1
             continue
 
-        port_name, sea, distance = find_nearest_port(lat, lon)
+        zone = find_zone(lat, lon)
 
         cleaned.append({
             "mmsi": mmsi,
@@ -101,9 +122,10 @@ def analyze_vessels(vessels):
             "lon": lon,
             "sog": sog,
             "speed_class": speed_class,
-            "port": port_name,
-            "sea": sea,
-            "distance_km": distance,
+            "port": zone["name"],
+            "zone_type": zone["type"],
+            "sea": zone["sea"],
+            "distance_km": zone["distance"],
         })
 
     total = len(cleaned)
@@ -111,6 +133,7 @@ def analyze_vessels(vessels):
     sea_counter = Counter(v["sea"] for v in cleaned)
     speed_counter = Counter(v["speed_class"] for v in cleaned)
     port_counter = Counter(v["port"] for v in cleaned)
+    zone_type_counter = Counter(v["zone_type"] for v in cleaned)
 
     port_speed = defaultdict(Counter)
     for v in cleaned:
@@ -122,6 +145,7 @@ def analyze_vessels(vessels):
         "sea_counter": sea_counter,
         "speed_counter": speed_counter,
         "port_counter": port_counter,
+        "zone_type_counter": zone_type_counter,
         "port_speed": port_speed,
         "vessels": cleaned,
     }
