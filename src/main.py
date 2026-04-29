@@ -1,20 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from analyzer import analyze_vessels, congestion_status
 from telegram import send_telegram_message
-
-
-def get_sample_vessels():
-    return [
-        {"mmsi": "470004823", "lat": 25.1866, "lon": 55.2218, "sog": 0.0},
-        {"mmsi": "235083529", "lat": 25.1901, "lon": 55.2201, "sog": 0.0},
-        {"mmsi": "419002003", "lat": 25.1902, "lon": 55.2224, "sog": 0.2},
-        {"mmsi": "232045285", "lat": 25.2096, "lon": 55.2215, "sog": 1.3},
-        {"mmsi": "636019898", "lat": 25.4237, "lon": 55.0537, "sog": 0.0},
-        {"mmsi": "570294000", "lat": 29.7064, "lon": 32.6263, "sog": 0.0},
-        {"mmsi": "622108300", "lat": 29.3174, "lon": 32.6553, "sog": 11.8},
-        {"mmsi": "471582000", "lat": 25.1878, "lon": 55.2190, "sog": 6.7},
-        {"mmsi": "999999999", "lat": 25.2580, "lon": 54.2510, "sog": 50.0},
-    ]
+from aisstream import get_ais_data
 
 
 def ksa_now():
@@ -85,7 +72,7 @@ def build_report(result):
 
 
 def main():
-    vessels = get_sample_vessels()
+    vessels = get_ais_data(limit=50)
     result = analyze_vessels(vessels)
     report = build_report(result)
 
