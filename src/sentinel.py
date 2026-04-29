@@ -14,7 +14,6 @@ def search_sentinel1_red_sea(days_back=3, limit=5):
     end = utc_now()
     start = end - timedelta(days=days_back)
 
-    # Red Sea approximate polygon: lon/lat
     footprint = (
         "geography'SRID=4326;"
         "POLYGON((34 12, 43 12, 43 30, 34 30, 34 12))'"
@@ -31,18 +30,21 @@ def search_sentinel1_red_sea(days_back=3, limit=5):
         f"and OData.CSC.Intersects(area={footprint})"
     )
 
+    # ✅ هنا الإصلاح: نفصل الترميز عن f-string
+    encoded_filters = quote(filters, safe="()'=, /:.")
+
     url = (
-        f"{CATALOGUE_URL}"
-        f"?$filter={quote(filters, safe=\"()'=, /:.\")}"
-        f"&$orderby=ContentDate/Start desc"
-        f"&$top={limit}"
-        f"&$select=Id,Name,ContentDate,Online,S3Path"
+        CATALOGUE_URL
+        + "?$filter=" + encoded_filters
+        + "&$orderby=ContentDate/Start desc"
+        + f"&$top={limit}"
+        + "&$select=Id,Name,ContentDate,Online,S3Path"
     )
 
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
 
-    return r.json().get("value", [])
+    return response.json().get("value", [])
 
 
 def build_sentinel_report(products):
@@ -69,6 +71,6 @@ def build_sentinel_report(products):
 
     lines.append("════════════════════")
     lines.append("🧾 التفسير:")
-    lines.append("هذه نتيجة بحث عن مشاهد Sentinel-1 SAR فوق البحر الأحمر، وليست كشف سفن نهائي بعد.")
+    lines.append("هذه مشاهد SAR حديثة للبحر الأحمر (ليست كشف سفن مباشر بعد).")
 
     return "\n".join(lines)
