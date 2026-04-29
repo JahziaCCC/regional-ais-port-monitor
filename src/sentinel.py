@@ -1,121 +1,194 @@
-from datetime import datetime, timezone, timedelta
-from urllib.parse import quote
+import os
 import requests
+import numpy as np
+import cv2
+from datetime import datetime, timedelta, timezone
 
 
-CATALOGUE_URL = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products"
+def get_token():
+    url = "https://services.sentinel-hub.com/oauth/token"
+
+    data = {
+        "grant_type": "client_credentials",
+        "client_id": os.getenv("SH_CLIENT_ID"),
+        "client_secret": os.getenv("SH_CLIENT_SECRET"),
+    }
+
+    r = requests.post(url, data=data, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
 
 
-def utc_now():
-    return datetime.now(timezone.utc)
+def get_sar_image():
+    token = get_token()
 
+    url = "https://services.sentinel-hub.com/api/v1/process"
 
-def search_sentinel1_red_sea(days_back=3, limit=5):
-    end = utc_now()
-    start = end - timedelta(days=days_back)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "image/png",
+    }
 
-    footprint = (
-        "geography'SRID=4326;"
-        "POLYGON((34 12, 43 12, 43 30, 34 30, 34 12))'"
-    )
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=5)
 
-    start_s = start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    end_s = end.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-    filters = (
-        "Collection/Name eq 'SENTINEL-1' "
-        f"and ContentDate/Start gt {start_s} "
-        f"and ContentDate/Start lt {end_s} "
-        "and contains(Name,'GRDH') "
-        "and contains(Name,'COG') "
-        f"and OData.CSC.Intersects(area={footprint})"
-    )
-
-    encoded_filters = quote(filters, safe="()'=, /:.")
-
-    url = (
-        CATALOGUE_URL
-        + "?$filter=" + encoded_filters
-        + "&$orderby=ContentDate/Start desc"
-        + f"&$top={limit}"
-        + "&$select=Id,Name,ContentDate,Online,S3Path"
-    )
-
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-
-    return response.json().get("value", [])
-
-
-def estimate_ship_targets_from_products(products):
-    """
-    نسخة أولية تقديرية:
-    لا تقوم بتحميل المشهد الكامل حتى لا يثقل GitHub Actions.
-    تحسب مؤشر قابلية الكشف حسب توفر مشاهد COG الحديثة.
-    الكشف الفعلي الكامل سيكون بالمرحلة التالية عبر تحميل COG أو Sentinel Hub.
-    """
-    if not products:
-        return {
-            "estimated_targets": 0,
-            "confidence": "منخفضة",
-            "status": "لا توجد مشاهد SAR كافية",
+    payload = {
+        "input": {
+            "bounds": {
+                "bbox": [34.0, 12.0, 43.0, 30.0],
+                "properties": {
+                    "crs": "http://www.opengis.net/def/crs/EPSG/0/4326"
+                },
+            },
+            "data": [
+                {
+                    "type": "sentinel-1-grd",
+                    "dataFilter": {
+                        "timeRange": {
+                            "from": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        },
+                        "acquisitionMode": "IW",
+                    },
+                }
+            ],
+        },
+        "output": {
+            "width": 1024,
+            "height": 1024,
+            "responses": [
+                {
+                    "identifier": "default",
+                    "format": {"type": "image/png"},
+                }
+            ],
+        },
+        "evalscript": """
+        //VERSION=3
+        function setup() {
+            return {
+                input: ["VV"],
+                output: { bands: 1, sampleType: "UINT8" }
+            };
         }
 
-    cog_count = sum(1 for p in products if "COG" in p.get("Name", ""))
-    online_count = sum(1 for p in products if p.get("Online") is True)
+        function evaluatePixel(sample) {
+            let vv = sample.VV;
+            let value = Math.log(vv + 0.0001) * 35 + 220;
+            value = Math.max(0, Math.min(255, value));
+            return [value];
+        }
+        """,
+    }
 
-    # تقدير أولي محافظ
-    estimated_targets = min((cog_count * 3) + online_count, 20)
+    r = requests.post(url, json=payload, headers=headers, timeout=60)
 
-    if estimated_targets >= 12:
+    if r.status_code != 200:
+        print("Sentinel Hub error:", r.status_code, r.text[:500])
+        return None
+
+    return np.frombuffer(r.content, dtype=np.uint8)
+
+
+def detect_ship_targets(image_bytes):
+    if image_bytes is None:
+        return {
+            "targets": 0,
+            "confidence": "منخفضة",
+            "note": "تعذر تحميل صورة SAR",
+        }
+
+    img = cv2.imdecode(image_bytes, cv2.IMREAD_GRAYSCALE)
+
+    if img is None:
+        return {
+            "targets": 0,
+            "confidence": "منخفضة",
+            "note": "تعذر قراءة صورة SAR",
+        }
+
+    # تحسين التباين
+    img = cv2.equalizeHist(img)
+
+    # تقليل الضوضاء
+    blur = cv2.GaussianBlur(img, (3, 3), 0)
+
+    # Threshold ذكي بدل الرقم الثابت
+    mean = np.mean(blur)
+    std = np.std(blur)
+    threshold_value = min(255, max(180, mean + 2.8 * std))
+
+    _, thresh = cv2.threshold(
+        blur,
+        threshold_value,
+        255,
+        cv2.THRESH_BINARY
+    )
+
+    # تنظيف الضوضاء الصغيرة
+    kernel = np.ones((2, 2), np.uint8)
+    clean = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+
+    contours, _ = cv2.findContours(
+        clean,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    valid_targets = []
+
+    for c in contours:
+        area = cv2.contourArea(c)
+
+        if area < 4:
+            continue
+
+        if area > 250:
+            continue
+
+        x, y, w, h = cv2.boundingRect(c)
+        ratio = max(w, h) / max(1, min(w, h))
+
+        if ratio > 8:
+            continue
+
+        valid_targets.append(c)
+
+    count = len(valid_targets)
+
+    if count >= 20:
         confidence = "متوسطة"
-    elif estimated_targets >= 5:
+        note = "تم رصد عدد مرتفع من الأهداف اللامعة المحتملة."
+    elif count >= 5:
         confidence = "منخفضة إلى متوسطة"
+        note = "تم رصد أهداف بحرية محتملة، مع احتمال وجود ضوضاء SAR."
+    elif count > 0:
+        confidence = "منخفضة"
+        note = "تم رصد أهداف محدودة تحتاج تحقق."
     else:
         confidence = "منخفضة"
+        note = "لم يتم رصد أهداف واضحة."
 
     return {
-        "estimated_targets": estimated_targets,
+        "targets": count,
         "confidence": confidence,
-        "status": "كشف تقديري أولي من مشاهد SAR المتاحة",
+        "note": note,
     }
 
 
-def build_sentinel_report(products):
-    detection = estimate_ship_targets_from_products(products)
+def build_sentinel_report():
+    image = get_sar_image()
+    detection = detect_ship_targets(image)
 
     lines = []
-    lines.append("🛰️ تقرير Sentinel-1 SAR — البحر الأحمر")
+    lines.append("🛰️ تقرير Sentinel SAR — كشف السفن في البحر الأحمر")
     lines.append("════════════════════")
-
-    if not products:
-        lines.append("لا توجد مشاهد Sentinel-1 متاحة خلال الفترة المحددة.")
-        return "\n".join(lines)
-
-    lines.append(f"عدد المشاهد المتاحة: {len(products)}")
-    lines.append(f"🚢 أهداف بحرية محتملة: {detection['estimated_targets']}")
+    lines.append(f"🚢 أهداف بحرية محتملة: {detection['targets']}")
     lines.append(f"📊 ثقة الكشف: {detection['confidence']}")
     lines.append("════════════════════")
-
-    for i, p in enumerate(products, 1):
-        name = p.get("Name", "")
-        online = p.get("Online", False)
-        content_date = p.get("ContentDate", {})
-        start = content_date.get("Start", "غير متاح")
-
-        mode = "واسع" if "IW" in name else "غير معروف"
-        resolution = "عالية" if "GRDH" in name else "غير معروف"
-        product_type = "COG" if "COG" in name else "SAFE"
-
-        lines.append(f"{i}) 📡 مشهد SAR")
-        lines.append(f"   🕒 وقت المشهد: {start}")
-        lines.append(f"   📊 الدقة: {resolution}")
-        lines.append(f"   📍 النطاق: {mode}")
-        lines.append(f"   🧩 النوع: {product_type}")
-        lines.append(f"   📦 الحالة: {'متاح' if online else 'غير متاح'}")
-
-    lines.append("════════════════════")
     lines.append("🧾 التفسير:")
-    lines.append("تم تنفيذ كشف أولي تقديري للأهداف البحرية المحتملة اعتمادًا على توفر مشاهد Sentinel-1 SAR/COG الحديثة فوق البحر الأحمر.")
+    lines.append(detection["note"])
+    lines.append("ملاحظة: هذا كشف مجاني محسّن باستخدام معالجة صورة SAR محليًا، وليس نموذج AI مدفوع.")
 
     return "\n".join(lines)
