@@ -27,5 +27,6 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
           PYTHONPATH: src
         run: python src/main.py
