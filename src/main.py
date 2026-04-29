@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from analyzer import analyze_vessels, congestion_status
 from telegram import send_telegram_message
 from aisstream import get_ais_data
-from sentinel import search_sentinel1_red_sea, build_sentinel_report
+from sentinel import build_sentinel_report
 
 
 def ksa_now():
@@ -75,13 +75,12 @@ def build_report(result):
 def main():
     vessels = get_ais_data(limit=150)
     result = analyze_vessels(vessels)
-    report = build_report(result)
+    ais_report = build_report(result)
 
-    print(report)
-    send_telegram_message(report)
+    print(ais_report)
+    send_telegram_message(ais_report)
 
-    sentinel_products = search_sentinel1_red_sea(days_back=3, limit=5)
-    sentinel_report = build_sentinel_report(sentinel_products)
+    sentinel_report = build_sentinel_report()
 
     print(sentinel_report)
     send_telegram_message(sentinel_report)
