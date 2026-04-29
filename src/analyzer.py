@@ -55,7 +55,7 @@ def find_zone(lat, lon):
     port_matches = [m for m in matches if m["type"] == "Port"]
     if port_matches:
         nearest_port = min(port_matches, key=lambda x: x["distance"])
-        if nearest_port["distance"] <= 12:
+        if nearest_port["distance"] <= 5:
             return nearest_port
 
     # بعد ذلك نعطي الأولوية لمناطق الانتظار لأنها أدق للحركة البحرية خارج الأرصفة
