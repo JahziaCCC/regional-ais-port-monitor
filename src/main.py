@@ -71,7 +71,7 @@ def build_report(result):
 
 
 def main():
-    vessels = get_ais_data(limit=50)
+    vessels = get_ais_data(limit=150)
     result = analyze_vessels(vessels)
     report = build_report(result)
 
