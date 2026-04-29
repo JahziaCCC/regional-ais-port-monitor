@@ -33,7 +33,7 @@ def build_report(result):
     lines.append("📡 تقرير حركة السفن AIS — الخليج والبحر الأحمر")
     lines.append(f"🕒 وقت التحديث: {now}")
     lines.append("════════════════════")
-    lines.append(f"🚢 إجمالي السفن بعد التنظيف: {total}")
+    lines.append(f"🚢 إجمالي السفن: {total}")
     lines.append(f"🌊 الخليج العربي: {gulf}")
     lines.append(f"🌊 البحر الأحمر: {red}")
     lines.append(f"❔ غير محدد: {unknown}")
@@ -54,8 +54,7 @@ def build_report(result):
         lines.append("لا توجد بيانات كافية.")
 
     lines.append("════════════════════")
-    lines.append(f"📊 مؤشر التوقف/الانتظار: {waiting_ratio}%")
-    lines.append(f"📌 الحالة: {status}")
+    lines.append(f"📌 الحالة العامة: {status}")
     lines.append("════════════════════")
 
     if waiting_ratio >= 70:
